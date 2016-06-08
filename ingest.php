@@ -1,11 +1,55 @@
 <?php
-	
-	/* -------	CONFIG -------	*/
-	$METADATA_TABLE    = "track_metadata";
-	$FINGERPRINT_TABLE = "track_fingerprints";
-	$UPLOAD_FOLDER     = "uploads/";
-	$CODEGEN_PATH      = "/home/zen/Desktop/codegen/echoprint-codegen";
+
+	/*
+	*	MUSIC FINGERPRINT SERVER 
+	*	--------------------------
+	*		# Currently supports only mp3 files
+	*	
+	*	ERROR DESCRIPTIONS
+	*	-------------------
+	*	002 - Cannot obtain duration of the uploaded music file
+	*	003 - Metadata didn't get stored in db
+	*/
+
 	/* ------- CONFIG -------- */
+	$GLOBALS['METADATA_TABLE']    = "track_metadata";
+	$GLOBALS['FINGERPRINT_TABLE'] = "track_fingerprints";
+	$GLOBALS['UPLOAD_FOLDER']     = "uploads/";
+	$GLOBALS['CODEGEN_PATH']      = "/home/zen/Desktop/codegen/echoprint-codegen";
+	/* ------- CONFIG -------- */
+
+	// global variables
+	$last_track_id = null;
+
+	// class for storing metadata information
+	class TrackMetadata
+	{
+		public $artist;
+		public $album;
+		public $trackName;
+
+		function set($trackName, $album = null, $artist = null)
+		{	
+			$this->artist    = $artist;
+			$this->album     = $album;
+			$this->trackName = $trackName;
+		}
+	}
+
+	// Add the track metadata to the database
+	function saveTrackMetadata($output)
+	{
+		global $last_track_id;
+		//displayMetadata($output);
+		require_once('db_config.php');
+		$meta = new TrackMetadata();
+		$meta->set($output->metadata->title,$output->metadata->artist,$output->metadata->release);
+		$query = "INSERT INTO ". $GLOBALS['METADATA_TABLE'] ." (track_name, artist, album) VALUES ('". $meta->trackName ."', '". $meta->artist ."', '". $meta->album ."')";
+		$result = mysqli_query($db,$query);
+		$last_track_id = mysqli_insert_id($db);
+		mysqli_close($db);
+		return $result;
+	}
 
 	// utility function for debugging 
 	function displayMetadata($data)
@@ -22,10 +66,86 @@
 		echo "</div>";
 	}
 
-	// function that splits the music file into 1 minute parts and adds their fingerprints to the database
-	function addMusicFingerprint($data)
+	// utility function to get json data as a php class instance
+	function extractData($filename, $startOffset, $length, $saveMetadata = false)
 	{
+		$command = $GLOBALS['CODEGEN_PATH']." $filename $startOffset $length";
+		echo $command."<br>";
+		$output = shell_exec($command);
+		$json = substr($output, 1, strlen($output)-3);
+		$data = json_decode($json);
+		if($saveMetadata)
+		{
+			saveTrackMetadata($data);
+		}
+		$data = $data->code;
+		unset($json);
+		unset($output);
+		return $data;
+	}
 
+	// function that splits the music file into 1 minute parts and adds their fingerprints to the database
+	function addMusicFingerprint($filename,$duration)
+	{
+		$count = 0;
+		$outputs = array();
+
+		$numMinutes = floor($duration / 60);
+		$numSeconds = $duration % 60;
+
+		for($i=0;$i<$numMinutes;$i++)
+		{
+			$startOffset = 60 * $i;
+			if($count == 0)
+			{
+				$data = extractData($filename,$startOffset,60,true);
+			}
+			else
+			{
+				$data = extractData($filename,$startOffset,60);
+			}
+			array_push($outputs, $data);
+			$count++;
+		}
+
+		if($numSeconds > 0)
+		{
+			$startOffset = $numMinutes * 60;
+			if($count == 0)
+			{
+				$data = extractData($filename,$startOffset,$numSeconds,true);
+			}
+			else
+			{
+				$data = extractData($filename,$startOffset,$numSeconds);
+			}
+			array_push($outputs, $data);
+			$count++;
+		}
+		$count = 0;
+		if($outputs != NULL) 
+		{
+			global $last_track_id;
+			if($last_track_id != null)
+			{
+				require('db_config.php');
+				foreach($outputs as $output)
+				{
+					$hash = md5($output);
+					$code = mysqli_escape_string($db,$output);
+					$query = "INSERT INTO ". $GLOBALS['FINGERPRINT_TABLE'] ." (code, hash, minute, track_id) VALUES ('$code','$hash',$count,$last_track_id)";
+					echo "<pre>$query</pre><br>";
+					$tmp_result = mysqli_query($db,$query);
+					echo "$count => $tmp_result";
+					$count++;
+				}
+				mysqli_close($db);
+			}
+			else // for some reason, the metadata didn't get stored :(
+			{
+				echo "ERROR (003): cannot fingerprint track, please try again!";
+			}
+		}
 	}
 ?>
 <html>
@@ -47,7 +167,6 @@
 			</tr>
 			</table>
 		</form>
-		
 		<?php
 			if(!empty($_POST)) 
 			{
@@ -56,7 +175,7 @@
 					if($_FILES['music_file']) 
 					{
 						$ext = pathinfo($_FILES['music_file']['name'], PATHINFO_EXTENSION);
-						$filename = $UPLOAD_FOLDER."temp.".$ext;
+						$filename = $GLOBALS['UPLOAD_FOLDER']."temp.".$ext;
 
 						if(move_uploaded_file($_FILES['music_file']['tmp_name'],$filename)) 
 						{
@@ -73,44 +192,20 @@
 							}
 							else 
 							{
-								$duration = 30; // setting this, as we don't know the track size
+								$duration = -1; // unable to get track size, file is corrupt maybe 
 							}
-							
-							$command = "$CODEGEN_PATH $filename $offset $duration";
-							$output = shell_exec($command);
-							
-							if($output != NULL) 
+
+							if($duration != -1)
 							{
-								$json = substr($output, 1, strlen($output)-3);
-								$data = json_decode($json);
-								unset($json);
-								displayMetadata($data);
-
-								$artist = $data->metadata->artist;
-								$album = $data->metadata->release;
-								$title = $data->metadata->title;
-								$duration = $data->metadata->duration;
-								$version = $data->metadata->version;
-								$code_count = $data->code_count;
-								$code = $data->code;
-								$code_hash = md5($data->code);
-
-
-								require_once('db_config.php');
-								$code = mysqli_escape_string($db,$code);
-								$query = "INSERT INTO echoprints (artist,album,title,duration,version,code_count,code,code_hash) VALUES ('$artist','$album','$title',$duration,'$version','$code_count','$code','$code_hash')";
-								//echo "<pre>$query</pre>";
-								$result = mysqli_query($db,$query);
-								//var_dump($result);
-								mysqli_close($db);
-								unlink($filename); // we're done with the music file, deleting it
-
+								echo "calling method with $filename and $duration as params. <br>";
+								addMusicFingerprint($filename,$duration);
 							}
-							else 
+							else
 							{
-								echo "ERROR: cannot fingerprint music track, please try again";
+								echo "ERROR (002) : cannot fingerprint music track, please try again";
 							}
 						}
+						unlink($filename);
 					}
 				}
 			}
