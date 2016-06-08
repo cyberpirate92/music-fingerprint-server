@@ -42,9 +42,9 @@
 	{
 		global $last_track_id;
 		//displayMetadata($output);
-		require_once('db_config.php');
+		require('db_config.php');
 		$meta = new TrackMetadata();
-		$meta->set($output->metadata->title,$output->metadata->artist,$output->metadata->release);
+		$meta->set($output->metadata->title,$output->metadata->release,$output->metadata->artist);
 		$query = "INSERT INTO ". $GLOBALS['METADATA_TABLE'] ." (track_name, artist, album) VALUES ('". $meta->trackName ."', '". $meta->artist ."', '". $meta->album ."')";
 		$result = mysqli_query($db,$query);
 		$last_track_id = mysqli_insert_id($db);
@@ -75,10 +75,9 @@
 		$output = shell_exec($command);
 		$json = substr($output, 1, strlen($output)-3);
 		$data = json_decode($json);
-		$data = $data->code;
 		if($saveMetadata)
 		{
-			if(!fingerprintExists($data))
+			if(!fingerprintExists($data->code))
 			{
 				saveTrackMetadata($data);
 			}
@@ -88,6 +87,7 @@
 				die();
 			}
 		}
+		$data = $data->code;
 		unset($json);
 		unset($output);
 		return $data;
@@ -96,7 +96,7 @@
 	// function to check if a fingerprint already exists in the database
 	function fingerprintExists($fingerprint)
 	{
-		$result = false;
+		$exists = false;
 		require('db_config.php');
 		$hash = md5($fingerprint);
 		$query = "SELECT track_id FROM ". $GLOBALS['FINGERPRINT_TABLE'] ." WHERE hash='$hash'";
@@ -105,11 +105,11 @@
 		{
 			if(mysqli_num_rows($result) > 0)
 			{
-				$result = true;
+				$exists = true;
 			}
 		}
 		mysqli_close($db);
-		return $result;
+		return $exists;
 	}
 
 	// function that splits the music file into 1 minute parts and adds their fingerprints to the database
@@ -162,9 +162,9 @@
 					$hash = md5($output);
 					$code = mysqli_escape_string($db,$output);
 					$query = "INSERT INTO ". $GLOBALS['FINGERPRINT_TABLE'] ." (code, hash, minute, track_id) VALUES ('$code','$hash',$count,$last_track_id)";
-					echo "<pre>$query</pre><br>";
+					//echo "<pre>$query</pre><br>";
 					$tmp_result = mysqli_query($db,$query);
-					echo "$count => $tmp_result";
+					//echo "$count => $tmp_result";
 					$count++;
 				}
 				mysqli_close($db);
@@ -209,8 +209,9 @@
 						{
 							$duration = 0;
 							$offset = 0;
+							$file_type = mime_content_type($filename);
 
-							if(strtolower($ext) === "mp3")
+							if($file_type === "audio/mpeg") // checks if the file is indeed an mp3 file
 							{
 								// extracting song duration
 								require_once('utils.php');
@@ -233,7 +234,7 @@
 								echo "ERROR (002) : cannot fingerprint music track, please try again";
 							}
 						}
-						unlink($filename);
+						//unlink($filename);
 					}
 				}
 			}
