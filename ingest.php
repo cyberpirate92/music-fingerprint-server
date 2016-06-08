@@ -1,14 +1,15 @@
 <?php
 
 	/*
-	*	MUSIC FINGERPRINT SERVER 
+	*	MUSIC FINGERPRINT SERVER
 	*	--------------------------
 	*		# Currently supports only mp3 files
-	*	
+	*
 	*	ERROR DESCRIPTIONS
 	*	-------------------
 	*	002 - Cannot obtain duration of the uploaded music file
 	*	003 - Metadata didn't get stored in db
+	*	004 - Track fingerprint already exists in database
 	*/
 
 	/* ------- CONFIG -------- */
@@ -29,7 +30,7 @@
 		public $trackName;
 
 		function set($trackName, $album = null, $artist = null)
-		{	
+		{
 			$this->artist    = $artist;
 			$this->album     = $album;
 			$this->trackName = $trackName;
@@ -51,7 +52,7 @@
 		return $result;
 	}
 
-	// utility function for debugging 
+	// utility function for debugging
 	function displayMetadata($data)
 	{
 		echo "<div>";
@@ -74,14 +75,41 @@
 		$output = shell_exec($command);
 		$json = substr($output, 1, strlen($output)-3);
 		$data = json_decode($json);
+		$data = $data->code;
 		if($saveMetadata)
 		{
-			saveTrackMetadata($data);
+			if(!fingerprintExists($data))
+			{
+				saveTrackMetadata($data);
+			}
+			else
+			{
+				echo "Error (004) : Track already exists";
+				die();
+			}
 		}
-		$data = $data->code;
 		unset($json);
 		unset($output);
 		return $data;
+	}
+
+	// function to check if a fingerprint already exists in the database
+	function fingerprintExists($fingerprint)
+	{
+		$result = false;
+		require('db_config.php');
+		$hash = md5($fingerprint);
+		$query = "SELECT track_id FROM ". $GLOBALS['FINGERPRINT_TABLE'] ." WHERE hash='$hash'";
+		$result = mysqli_query($db,$query);
+		if($result)
+		{
+			if(mysqli_num_rows($result) > 0)
+			{
+				$result = true;
+			}
+		}
+		mysqli_close($db);
+		return $result;
 	}
 
 	// function that splits the music file into 1 minute parts and adds their fingerprints to the database
@@ -123,7 +151,7 @@
 			$count++;
 		}
 		$count = 0;
-		if($outputs != NULL) 
+		if($outputs != NULL)
 		{
 			global $last_track_id;
 			if($last_track_id != null)
@@ -168,21 +196,21 @@
 			</table>
 		</form>
 		<?php
-			if(!empty($_POST)) 
+			if(!empty($_POST))
 			{
-				if(!empty($_FILES)) 
+				if(!empty($_FILES))
 				{
-					if($_FILES['music_file']) 
+					if($_FILES['music_file'])
 					{
 						$ext = pathinfo($_FILES['music_file']['name'], PATHINFO_EXTENSION);
 						$filename = $GLOBALS['UPLOAD_FOLDER']."temp.".$ext;
 
-						if(move_uploaded_file($_FILES['music_file']['tmp_name'],$filename)) 
+						if(move_uploaded_file($_FILES['music_file']['tmp_name'],$filename))
 						{
 							$duration = 0;
 							$offset = 0;
 
-							if(strtolower($ext) === "mp3") 
+							if(strtolower($ext) === "mp3")
 							{
 								// extracting song duration
 								require_once('utils.php');
@@ -190,9 +218,9 @@
 								$duration = $music_file->getDuration();
 								unset($music_file);
 							}
-							else 
+							else
 							{
-								$duration = -1; // unable to get track size, file is corrupt maybe 
+								$duration = -1; // unable to get track size, file is corrupt maybe
 							}
 
 							if($duration != -1)
