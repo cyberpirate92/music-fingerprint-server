@@ -12,30 +12,11 @@
 	*	004 - Track fingerprint already exists in database
 	*/
 
-	/* ------- CONFIG -------- */
-	$GLOBALS['METADATA_TABLE']    = "track_metadata";
-	$GLOBALS['FINGERPRINT_TABLE'] = "track_fingerprints";
-	$GLOBALS['UPLOAD_FOLDER']     = "uploads/";
-	$GLOBALS['CODEGEN_PATH']      = "/home/zen/Desktop/codegen/echoprint-codegen";
-	/* ------- CONFIG -------- */
+	require_once('config.php');
+	require_once('TrackMetadata.php');
 
 	// global variables
 	$last_track_id = null;
-
-	// class for storing metadata information
-	class TrackMetadata
-	{
-		public $artist;
-		public $album;
-		public $trackName;
-
-		function set($trackName, $album = null, $artist = null)
-		{
-			$this->artist    = $artist;
-			$this->album     = $album;
-			$this->trackName = $trackName;
-		}
-	}
 
 	// Add the track metadata to the database
 	function saveTrackMetadata($output)
@@ -71,7 +52,6 @@
 	function extractData($filename, $startOffset, $length, $saveMetadata = false)
 	{
 		$command = $GLOBALS['CODEGEN_PATH']." $filename $startOffset $length";
-		echo $command."<br>";
 		$output = shell_exec($command);
 		$json = substr($output, 1, strlen($output)-3);
 		$data = json_decode($json);
@@ -226,8 +206,8 @@
 
 							if($duration != -1)
 							{
-								echo "calling method with $filename and $duration as params. <br>";
 								addMusicFingerprint($filename,$duration);
+
 							}
 							else
 							{
